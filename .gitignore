@@ -1,7 +1,7 @@
 /.env
+/config/
 /vendor/
 /.idea
-/vendor/
 
 ###> shopware/core ###
 .env.local

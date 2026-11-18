@@ -36,6 +36,8 @@ x-shopware: &shopware
     - thumbnail:/var/www/html/public/thumbnail
     - theme:/var/www/html/public/theme
     - sitemap:/var/www/html/public/sitemap
+    # Shop-specific Symfony and Shopware config, see README
+    - ./config:/var/www/html/config/packages/prod/override:ro
 
 x-depends-on-init: &depends-on-init
   init:

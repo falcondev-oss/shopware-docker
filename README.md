@@ -45,7 +45,19 @@ Do not publish port 8000 on a public address. Docker forwards public traffic fro
 
 Install, update and remove plugins and apps in the Administration: from the Shopware Store or as an uploaded zip. They are stored in the `plugins` and `apps` volumes, which all containers share. After a change, each container rebuilds its Symfony container on its next request, and the workers restart.
 
-Plugins that need extra Composer packages at install time do not work. Shopware would run `composer require` in the image. Few store plugins do this.
+Plugins that need extra Composer packages at install time do not work, because Shopware would have to run `composer require` in the image. The image already contains the one most shops need: `shopware/paypal-sdk` 1.x for SwagPayPal 10.x.
+
+## Shop-specific config
+
+Put Symfony or Shopware YAML files into `config/` next to `compose.yaml`. All Shopware containers mount it as `config/packages/prod/override`. Example `config/stock.yaml`:
+
+```yaml
+shopware:
+    stock:
+        enable_stock_management: false
+```
+
+When the folder is not empty, each container builds its container cache on start instead of using the one in the image. Its first request takes a few seconds longer. After a change, run `docker compose up -d --force-recreate`.
 
 ## Update Shopware
 

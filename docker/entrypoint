@@ -1,0 +1,10 @@
+#!/bin/sh
+set -e
+
+# The container cache built into the image does not know the config in config/packages/prod/override.
+# Remove it, so the first command or request builds a new one with that config.
+if [ -n "$(ls -A /var/www/html/config/packages/prod/override 2>/dev/null)" ]; then
+    rm -rf /var/www/html/var/cache/prod_*
+fi
+
+exec docker-php-entrypoint "$@"
