@@ -1,0 +1,4 @@
+deployment:
+  # Extensions are installed and updated in the Administration, so deploys leave them alone.
+  extension-management:
+    enabled: false

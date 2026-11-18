@@ -1,4 +1,0 @@
-mcp:
-    # Import the HTTP routes for the configured MCP servers.
-    resource: .
-    type: mcp

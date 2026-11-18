@@ -1,5 +1,5 @@
 x-shopware: &shopware
-  image: ${IMAGE:-shopware}
+  image: ${IMAGE:-ghcr.io/falcondev-oss/shopware:6.7}
   restart: unless-stopped
   # The base image checks Caddy, which only runs in web.
   healthcheck:
@@ -28,6 +28,9 @@ x-shopware: &shopware
     INSTALL_ADMIN_EMAIL: ${INSTALL_ADMIN_EMAIL:-}
     SALES_CHANNEL_URL: ${APP_URL}
   volumes:
+    - plugins:/var/www/html/custom/plugins
+    - apps:/var/www/html/custom/apps
+    - bundles:/var/www/html/public/bundles
     - files:/var/www/html/files
     - media:/var/www/html/public/media
     - thumbnail:/var/www/html/public/thumbnail
@@ -40,12 +43,9 @@ x-depends-on-init: &depends-on-init
     restart: true
 
 services:
-  # Installs Shopware on the first start, then runs migrations, extension updates and theme:compile on every deploy.
+  # Installs Shopware on the first start, then runs migrations and theme:compile on every deploy.
   init:
     <<: *shopware
-    build:
-      context: .
-      secrets: [composer_auth]
     restart: 'no'
     command: [/setup]
     depends_on:
@@ -138,13 +138,12 @@ services:
 volumes:
   database:
   valkey-store:
+  plugins:
+  apps:
+  bundles:
   files:
   media:
   thumbnail:
   theme:
   sitemap:
 
-secrets:
-  # JSON for Composer, e.g. to install extensions from packages.shopware.com
-  composer_auth:
-    environment: COMPOSER_AUTH

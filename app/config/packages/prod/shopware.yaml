@@ -1,10 +1,10 @@
 shopware:
     deployment:
-        # Code and plugins come from the image. Never change them at runtime.
+        # Several containers share one shop: never run Composer or delete the local container cache at runtime.
+        # Extensions live in shared volumes, so the Administration can still install and update them.
         cluster_setup: true
-        runtime_extension_management: false
 
-    # The web updater writes into the image and is lost on the next deploy. Update by rebuilding.
+    # The web updater writes into the image and is lost on the next deploy. Update by pulling a new image.
     auto_update:
         enabled: false
         hide_module: true

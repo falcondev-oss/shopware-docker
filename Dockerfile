@@ -2,32 +2,49 @@
 
 ARG PHP_VERSION=8.4
 
-FROM ghcr.io/shopware/shopware-cli:latest-php-${PHP_VERSION} AS build
+FROM ghcr.io/shopware/docker-base:${PHP_VERSION}-frankenphp AS build
 
-WORKDIR /src
-COPY . .
+ARG SHOPWARE_VERSION=6.7.16.1
 
-# Installs Composer packages, builds the Administration and Storefront assets of all extensions
-# and runs assets:install, so the image needs no build step at runtime.
-RUN --mount=type=secret,id=composer_auth,env=COMPOSER_AUTH \
-    --mount=type=cache,target=/root/.composer \
-    --mount=type=cache,target=/root/.npm \
-    CI=true /usr/local/bin/entrypoint.sh shopware-cli project ci /src
+COPY --from=composer:2 /usr/bin/composer /usr/local/bin/composer
+
+WORKDIR /var/www/html
+
+RUN --mount=type=cache,target=/tmp/composer/cache,uid=82,gid=82 <<EOF
+    set -e
+    composer create-project --no-install --no-scripts shopware/production:${SHOPWARE_VERSION} .
+    composer install --no-dev --no-scripts --optimize-autoloader
+    # The Redis transport must match the Symfony version of Shopware.
+    symfony=$(composer show symfony/messenger --format=json | php -r 'preg_match("/\d+\.\d+/", json_decode(stream_get_contents(STDIN))->versions[0], $m); echo $m[0];')
+    composer require --no-scripts --update-no-dev --optimize-autoloader shopware/deployment-helper "symfony/redis-messenger:~${symfony}.0"
+    rm -rf .env* compose*.yaml
+EOF
+
+COPY --chown=82:82 app/ ./
+
+# Directories that become volumes must exist with the right owner, so new volumes inherit it.
+# The warm container cache lets a new container answer its first request at full speed.
+RUN <<EOF
+    set -e
+    mkdir -p files custom/plugins custom/apps public/media public/thumbnail public/theme public/sitemap
+    export REDIS_CACHE_URL=redis://build REDIS_STORE_URL=redis://build
+    php bin/console assets:install
+    php bin/console cache:warmup
+EOF
 
 FROM ghcr.io/shopware/docker-base:${PHP_VERSION}-frankenphp
 
+ARG SHOPWARE_VERSION=6.7.16.1
+
+LABEL org.opencontainers.image.source=https://github.com/falcondev-oss/shopware-docker \
+      org.opencontainers.image.version=${SHOPWARE_VERSION}
+
 COPY --link docker/Caddyfile /etc/caddy/Caddyfile
-COPY --link --chown=82:82 --from=build /src /var/www/html
+COPY --link --from=build /var/www/html /var/www/html
 
-ENV COMPOSER_PLUGIN_LOADER=1 \
-    BLUE_GREEN_DEPLOYMENT=1 \
-    SHOPWARE_DEPLOYMENT_SKIP_ASSETS_INSTALL=1 \
-    DO_NOT_TRACK=1
-
-# Directories that become volumes must exist with the right owner, so new volumes inherit it.
-# The warm container cache makes every new container answer its first request at full speed.
-RUN rm -rf var/cache/* \
-    && mkdir -p files public/media public/thumbnail public/theme public/sitemap \
-    && REDIS_CACHE_URL=redis://build REDIS_STORE_URL=redis://build php bin/console cache:warmup
+# Extensions change at runtime, so OPcache checks files for changes every 2 seconds.
+ENV BLUE_GREEN_DEPLOYMENT=1 \
+    DO_NOT_TRACK=1 \
+    PHP_OPCACHE_VALIDATE_TIMESTAMPS=1
 
 EXPOSE 8000
