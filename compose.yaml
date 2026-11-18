@@ -1,0 +1,150 @@
+x-shopware: &shopware
+  image: ${IMAGE:-shopware}
+  restart: unless-stopped
+  # The base image checks Caddy, which only runs in web.
+  healthcheck:
+    disable: true
+  environment:
+    APP_URL: ${APP_URL:?}
+    APP_SECRET: ${APP_SECRET:?}
+    INSTANCE_ID: ${INSTANCE_ID:?}
+    DATABASE_URL: mysql://shopware:${DB_PASSWORD:?}@database:3306/shopware
+    MAILER_DSN: ${MAILER_DSN:-null://null}
+    REDIS_CACHE_URL: redis://valkey-cache:6379?persistent=1
+    REDIS_STORE_URL: redis://valkey-store:6379?persistent=1
+    LOCK_DSN: redis://valkey-store:6379
+    MESSENGER_TRANSPORT_DSN: redis://valkey-store:6379/async?auto_setup=false
+    MESSENGER_TRANSPORT_LOW_PRIORITY_DSN: redis://valkey-store:6379/low_priority?auto_setup=false
+    PHP_SESSION_HANDLER: redis
+    PHP_SESSION_SAVE_PATH: 'tcp://valkey-store:6379?persistent=1&prefix=session:'
+    PHP_MEMORY_LIMIT: ${PHP_MEMORY_LIMIT:-512m}
+    PHP_MAX_UPLOAD_SIZE: ${PHP_MAX_UPLOAD_SIZE:-128m}
+    LOG_LEVEL: ${LOG_LEVEL:-error}
+    # Only read on the first deploy
+    INSTALL_LOCALE: ${INSTALL_LOCALE:-de-DE}
+    INSTALL_CURRENCY: ${INSTALL_CURRENCY:-EUR}
+    INSTALL_ADMIN_USERNAME: ${INSTALL_ADMIN_USERNAME:-admin}
+    INSTALL_ADMIN_PASSWORD: ${INSTALL_ADMIN_PASSWORD:?}
+    INSTALL_ADMIN_EMAIL: ${INSTALL_ADMIN_EMAIL:-}
+    SALES_CHANNEL_URL: ${APP_URL}
+  volumes:
+    - files:/var/www/html/files
+    - media:/var/www/html/public/media
+    - thumbnail:/var/www/html/public/thumbnail
+    - theme:/var/www/html/public/theme
+    - sitemap:/var/www/html/public/sitemap
+
+x-depends-on-init: &depends-on-init
+  init:
+    condition: service_completed_successfully
+    restart: true
+
+services:
+  # Installs Shopware on the first start, then runs migrations, extension updates and theme:compile on every deploy.
+  init:
+    <<: *shopware
+    build:
+      context: .
+      secrets: [composer_auth]
+    restart: 'no'
+    command: [/setup]
+    depends_on:
+      database:
+        condition: service_healthy
+      valkey-cache:
+        condition: service_healthy
+      valkey-store:
+        condition: service_healthy
+
+  web:
+    <<: *shopware
+    depends_on: *depends-on-init
+    ports:
+      - ${HTTP_BIND:-127.0.0.1:8000}:8000
+    healthcheck:
+      test: [CMD, curl, -fsS, -o, /dev/null, http://127.0.0.1:8000/api/_info/health-check]
+      start_period: 30s
+      start_interval: 2s
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    <<: *shopware
+    depends_on: *depends-on-init
+    command: [php, bin/console, messenger:consume, webhook, async, low_priority, --time-limit=300, --memory-limit=384M]
+    stop_grace_period: 120s
+    deploy:
+      replicas: ${WORKER_REPLICAS:-2}
+
+  scheduler:
+    <<: *shopware
+    depends_on: *depends-on-init
+    command: [php, bin/console, scheduled-task:run, --memory-limit=256M]
+
+  database:
+    image: mariadb:11.8
+    restart: unless-stopped
+    environment:
+      MARIADB_DATABASE: shopware
+      MARIADB_USER: shopware
+      MARIADB_PASSWORD: ${DB_PASSWORD:?}
+      MARIADB_RANDOM_ROOT_PASSWORD: 1
+      MARIADB_AUTO_UPGRADE: 1
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --sql-mode=STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION
+      - --group-concat-max-len=320000
+      - --default-time-zone=+00:00
+      - --max-allowed-packet=128M
+      - --max-connections=${DB_MAX_CONNECTIONS:-500}
+      - --skip-name-resolve
+      - --innodb-buffer-pool-size=${DB_BUFFER_POOL_SIZE:-1G}
+      - --innodb-log-file-size=${DB_LOG_FILE_SIZE:-256M}
+    volumes:
+      - database:/var/lib/mysql
+    healthcheck:
+      test: [CMD, healthcheck.sh, --connect, --innodb_initialized]
+      start_period: 60s
+      start_interval: 2s
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # HTTP and object cache, not persisted. allkeys-lru is safe: when a tag version is evicted,
+  # the entries with that tag count as invalid.
+  valkey-cache:
+    image: valkey/valkey:9-alpine
+    restart: unless-stopped
+    command: [valkey-server, --save, '', --appendonly, 'no', --maxmemory, '${CACHE_MAXMEMORY:-1gb}', --maxmemory-policy, allkeys-lru]
+    healthcheck: &valkey-healthcheck
+      test: [CMD, valkey-cli, ping]
+      start_period: 10s
+      start_interval: 1s
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # Sessions, carts, locks, message queue. Persisted and never evicted.
+  valkey-store:
+    image: valkey/valkey:9-alpine
+    restart: unless-stopped
+    command: [valkey-server, --appendonly, 'yes', --appendfsync, everysec, --maxmemory-policy, noeviction]
+    volumes:
+      - valkey-store:/data
+    healthcheck: *valkey-healthcheck
+
+volumes:
+  database:
+  valkey-store:
+  files:
+  media:
+  thumbnail:
+  theme:
+  sitemap:
+
+secrets:
+  # JSON for Composer, e.g. to install extensions from packages.shopware.com
+  composer_auth:
+    environment: COMPOSER_AUTH

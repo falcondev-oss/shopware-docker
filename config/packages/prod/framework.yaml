@@ -1,0 +1,30 @@
+parameters:
+    # The container is only reachable through the reverse proxy on a private network.
+    env(TRUSTED_PROXIES): 'private_ranges'
+
+framework:
+    trusted_proxies: '%env(TRUSTED_PROXIES)%'
+    trusted_headers: ['x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto', 'x-forwarded-port', 'x-forwarded-prefix']
+
+    # Configuration comes from the container environment only.
+    secrets:
+        enabled: false
+
+    # Shared between all containers, so cache invalidation and worker restart signals reach every replica.
+    cache:
+        app: cache.adapter.redis
+        default_redis_provider: '%env(REDIS_CACHE_URL)%'
+
+    # Mails leave through the queue, so a slow SMTP server never blocks a request.
+    mailer:
+        message_bus: messenger.default_bus
+
+    messenger:
+        transports:
+            # Redis streams need a unique consumer per process. Docker sets HOSTNAME to the container ID.
+            async:
+                options:
+                    consumer: '%env(HOSTNAME)%'
+            low_priority:
+                options:
+                    consumer: '%env(HOSTNAME)%'

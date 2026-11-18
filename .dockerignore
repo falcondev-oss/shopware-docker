@@ -1,0 +1,16 @@
+.git
+.agents
+.env*
+compose*.yaml
+README.md
+auth.json
+vendor
+var/*
+!var/.htaccess
+public/bundles/*
+public/media/*
+public/theme/*
+public/thumbnail/*
+public/sitemap/*
+files/*
+!files/.htaccess

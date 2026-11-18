@@ -1,0 +1,50 @@
+shopware:
+    deployment:
+        # Code and plugins come from the image. Never change them at runtime.
+        cluster_setup: true
+        runtime_extension_management: false
+
+    # The web updater writes into the image and is lost on the next deploy. Update by rebuilding.
+    auto_update:
+        enabled: false
+        hide_module: true
+
+    # CLI workers process the queue.
+    admin_worker:
+        enable_admin_worker: false
+
+    redis:
+        connections:
+            cache:
+                dsn: '%env(REDIS_CACHE_URL)%'
+            store:
+                dsn: '%env(REDIS_STORE_URL)%'
+
+    cache:
+        compress: true
+        compression_method: zstd
+        invalidation:
+            delay_options:
+                storage: redis
+                connection: store
+
+    cart:
+        compress: true
+        compression_method: zstd
+        storage:
+            type: redis
+            config:
+                connection: store
+
+    increment:
+        user_activity:
+            type: redis
+            config:
+                connection: store
+        message_queue:
+            type: redis
+            config:
+                connection: store
+
+    mail:
+        update_mail_variables_on_send: false
