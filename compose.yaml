@@ -19,13 +19,14 @@ x-shopware: &shopware
     PHP_MEMORY_LIMIT: ${PHP_MEMORY_LIMIT:-512m}
     PHP_MAX_UPLOAD_SIZE: ${PHP_MAX_UPLOAD_SIZE:-128m}
     LOG_LEVEL: ${LOG_LEVEL:-error}
-    # Only read on the first deploy
+    # Only read on the first deploy, which also creates a storefront sales channel for APP_URL.
+    # Do not set SALES_CHANNEL_URL: the Deployment Helper reads it on every update and then
+    # creates another storefront whenever no sales channel domain matches it.
     INSTALL_LOCALE: ${INSTALL_LOCALE:-de-DE}
     INSTALL_CURRENCY: ${INSTALL_CURRENCY:-EUR}
     INSTALL_ADMIN_USERNAME: ${INSTALL_ADMIN_USERNAME:-admin}
     INSTALL_ADMIN_PASSWORD: ${INSTALL_ADMIN_PASSWORD:?}
     INSTALL_ADMIN_EMAIL: ${INSTALL_ADMIN_EMAIL:-}
-    SALES_CHANNEL_URL: ${APP_URL}
     # Shop-specific Symfony and Shopware config as YAML, see README
     SHOPWARE_CONFIG: ${SHOPWARE_CONFIG:-}
   volumes:
