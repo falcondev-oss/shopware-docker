@@ -80,7 +80,7 @@ set -a && . ./.env && set +a
 docker stack deploy -c compose.yaml shop
 ```
 
-The first new container runs the migrations. Swarm starts the new `web` next to the old one and stops the old one only when the new one is healthy, so no request fails. If the new `web` does not get healthy, Swarm rolls back. Back up the database first, and check in the Administration that your extensions support the new version.
+The first new container runs the migrations. Swarm starts the new `web` next to the old one and stops the old one only when the new one is healthy, so no request fails. If the new `web` does not get healthy, the old one keeps serving and Swarm pauses the update of `web`. `worker` and `scheduler` already run the new image, which works because the migrations are compatible with the old code (`BLUE_GREEN_DEPLOYMENT=1`). Fix the cause and deploy again. Going back to the old `IMAGE` works for the same reason, but it does not undo the migrations: containers with an older image than the database start without the Deployment Helper. Back up the database first, and check in the Administration that your extensions support the new version.
 
 ## What the container setup changes in Shopware
 

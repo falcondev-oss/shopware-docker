@@ -45,9 +45,9 @@ services:
     <<: *shopware
     deploy:
       # The new task runs the migrations and passes its healthcheck before the old one stops.
+      # If it never gets healthy, the old one keeps running and the update pauses.
       update_config:
         order: start-first
-        failure_action: rollback
     healthcheck:
       test: [CMD, curl, -fsS, -o, /dev/null, http://127.0.0.1:8000/api/_info/health-check]
       # Covers the first install and long migrations

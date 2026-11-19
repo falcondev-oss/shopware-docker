@@ -30,26 +30,31 @@ for ($attempt = 1; ; ++$attempt) {
     }
 }
 
-$deployed = function () use ($db): ?string {
+// True when the database has this version or a newer one. During a rolling update the old
+// containers keep running against the updated database and must not deploy their version.
+$upToDate = function () use ($db, $version): bool {
     try {
         $value = $db->query('SELECT configuration_value FROM system_config WHERE configuration_key = "deployment.version" AND sales_channel_id IS NULL')->fetchColumn();
     } catch (PDOException) {
-        return null; // not installed yet
+        return false; // not installed yet
     }
 
-    return $value === false ? null : json_decode($value, true)['_value'];
+    return $value !== false && version_compare(json_decode($value, true)['_value'], $version, '>=');
 };
 
-if ($deployed() === $version) {
+if ($upToDate()) {
     exit(0);
 }
 
 // Released when this process exits. MariaDB does not accept a negative timeout.
-while ((int) $db->query("SELECT GET_LOCK('shopware_deployment', 3600)")->fetchColumn() !== 1) {
+while (($locked = $db->query("SELECT GET_LOCK('shopware_deployment', 3600)")->fetchColumn()) !== 1) {
+    if ($locked === null) {
+        throw new RuntimeException('GET_LOCK failed');
+    }
     fwrite(STDERR, "Waiting for another container to deploy Shopware\n");
 }
 
-if ($deployed() !== $version) {
+if (!$upToDate()) {
     passthru('/setup', $code);
     exit($code);
 }
