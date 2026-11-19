@@ -1,6 +1,6 @@
 # Shopware in Docker
 
-Production image and Docker Compose stack for Shopware 6.7, for use behind any reverse proxy. Extensions are installed and updated in the Administration, like on a normal server. No custom build is needed.
+Production image and Docker Swarm stack for Shopware 6.7, for use behind any reverse proxy. Extensions are installed and updated in the Administration, like on a normal server. No custom build is needed.
 
 ```text
 ghcr.io/falcondev-oss/shopware:6.7.16.1   # exact Shopware version
@@ -14,32 +14,46 @@ The image is built from the official `ghcr.io/shopware/docker-base` FrankenPHP i
 
 | Service | Job |
 |---|---|
-| `init` | Runs the [Deployment Helper](https://developer.shopware.com/docs/guides/hosting/installation-updates/deployments/deployment-helper/) on every start: installs Shopware on the first start, afterwards database migrations and `theme:compile`. The other Shopware services start after it succeeds |
 | `web` | FrankenPHP (Caddy with PHP), port 8000 |
-| `worker` | `messenger:consume webhook async low_priority`, 2 replicas. Restarts every 5 minutes, at 384 MB, or when an extension changes |
+| `worker` | `messenger:consume webhook async low_priority`, 2 replicas. Restarts every hour, at 384 MB, or when an extension changes |
 | `scheduler` | `scheduled-task:run`, puts due scheduled tasks into the queue |
 | `database` | MariaDB 11.8 |
 | `valkey-cache` | HTTP cache and object cache, in memory only |
 | `valkey-store` | Sessions, carts, locks, message queue, delayed cache invalidation. Persisted with AOF |
 
-`init`, `web`, `worker` and `scheduler` run the same image.
+`web`, `worker` and `scheduler` run the same image. There is no separate setup service: every Shopware container compares the Shopware version in the database with its own on start. When they differ, one container takes a database lock and runs the [Deployment Helper](https://developer.shopware.com/docs/guides/hosting/installation-updates/deployments/deployment-helper/) (installation on the first start, later migrations and `theme:compile`). The others wait for it. When they match, the container starts at once.
 
 ## Start
 
-Copy `compose.yaml` and `.env.example` to the server.
+`compose.yaml` is a Swarm stack file. Deploy it in Portainer with the variables from `.env.example`, or on the command line:
 
 ```sh
 cp .env.example .env   # fill in APP_URL, secrets and the admin password
-docker compose up -d
+set -a && . ./.env && set +a
+docker stack deploy -c compose.yaml shop
 ```
 
 The first start installs Shopware. Log in at `<APP_URL>/admin` as `admin` with `INSTALL_ADMIN_PASSWORD`.
 
+Docker Compose is not supported: it gives all `worker` replicas the same messenger consumer name.
+
+The volumes are local to the node. On a Swarm with more than one node, keep all services on one node, or put the shared volumes (`plugins`, `apps`, `bundles`, `files`, `media`, `thumbnail`, `theme`, `sitemap`) on shared storage.
+
 ## Reverse proxy
 
-Point the proxy at `HTTP_BIND` (default `127.0.0.1:8000`) and send the usual `X-Forwarded-For`, `X-Forwarded-Proto` and `X-Forwarded-Host` headers. Traefik, Caddy and nginx with default settings work. Shopware trusts these headers from private addresses only (`TRUSTED_PROXIES=private_ranges`).
+Connect the proxy to `web` on port 8000 and send the usual `X-Forwarded-For`, `X-Forwarded-Proto` and `X-Forwarded-Host` headers. Traefik, Caddy and nginx with default settings work. Shopware trusts these headers from private addresses only (`TRUSTED_PROXIES=private_ranges`). Example for Traefik in Swarm mode, added to `web`:
 
-Do not publish port 8000 on a public address. Docker forwards public traffic from a private gateway address, so anyone could then fake the client IP and the scheme.
+```yaml
+    networks: [default, traefik]
+    deploy:
+      labels:
+        traefik.enable: 'true'
+        traefik.swarm.network: traefik
+        traefik.http.routers.shop.rule: Host(`shop.example.com`)
+        traefik.http.services.shop.loadbalancer.server.port: '8000'
+```
+
+Do not publish port 8000 on a public address. Swarm forwards public traffic from a private address, so anyone could then fake the client IP and the scheme.
 
 ## Extensions
 
@@ -49,25 +63,24 @@ Plugins that need extra Composer packages at install time do not work, because S
 
 ## Shop-specific config
 
-Put Symfony or Shopware YAML files into `config/` next to `compose.yaml`. All Shopware containers mount it as `config/packages/prod/override`. Example `config/stock.yaml`:
+Set `SHOPWARE_CONFIG` to Symfony or Shopware config as YAML. All Shopware containers load it. One line is enough:
 
-```yaml
-shopware:
-    stock:
-        enable_stock_management: false
+```sh
+SHOPWARE_CONFIG={shopware: {stock: {enable_stock_management: false}}}
 ```
 
-When the folder is not empty, each container builds its container cache on start instead of using the one in the image. Its first request takes a few seconds longer. After a change, run `docker compose up -d --force-recreate`.
+With `SHOPWARE_CONFIG` set, each container builds its container cache on start instead of using the one in the image. Its first request takes a few seconds longer. A changed value takes effect on the next deploy.
 
 ## Update Shopware
 
 Change `IMAGE` in `.env` to the new version, then:
 
 ```sh
-docker compose pull && docker compose up -d
+set -a && . ./.env && set +a
+docker stack deploy -c compose.yaml shop
 ```
 
-`init` runs the migrations before the new `web` starts. Back up the database first, and check in the Administration that your extensions support the new version. Recreating `web` drops requests for under a second.
+The first new container runs the migrations. Swarm starts the new `web` next to the old one and stops the old one only when the new one is healthy, so no request fails. If the new `web` does not get healthy, Swarm rolls back. Back up the database first, and check in the Administration that your extensions support the new version.
 
 ## What the container setup changes in Shopware
 

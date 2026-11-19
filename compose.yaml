@@ -1,6 +1,5 @@
 x-shopware: &shopware
   image: ${IMAGE:-ghcr.io/falcondev-oss/shopware:6.7}
-  restart: unless-stopped
   # The base image checks Caddy, which only runs in web.
   healthcheck:
     disable: true
@@ -27,6 +26,8 @@ x-shopware: &shopware
     INSTALL_ADMIN_PASSWORD: ${INSTALL_ADMIN_PASSWORD:?}
     INSTALL_ADMIN_EMAIL: ${INSTALL_ADMIN_EMAIL:-}
     SALES_CHANNEL_URL: ${APP_URL}
+    # Shop-specific Symfony and Shopware config as YAML, see README
+    SHOPWARE_CONFIG: ${SHOPWARE_CONFIG:-}
   volumes:
     - plugins:/var/www/html/custom/plugins
     - apps:/var/www/html/custom/apps
@@ -36,36 +37,21 @@ x-shopware: &shopware
     - thumbnail:/var/www/html/public/thumbnail
     - theme:/var/www/html/public/theme
     - sitemap:/var/www/html/public/sitemap
-    # Shop-specific Symfony and Shopware config, see README
-    - ./config:/var/www/html/config/packages/prod/override:ro
 
-x-depends-on-init: &depends-on-init
-  init:
-    condition: service_completed_successfully
-    restart: true
-
+# Every Shopware container installs or updates Shopware on start when the database
+# does not have the image version yet. One does the work, the others wait for it.
 services:
-  # Installs Shopware on the first start, then runs migrations and theme:compile on every deploy.
-  init:
-    <<: *shopware
-    restart: 'no'
-    command: [/setup]
-    depends_on:
-      database:
-        condition: service_healthy
-      valkey-cache:
-        condition: service_healthy
-      valkey-store:
-        condition: service_healthy
-
   web:
     <<: *shopware
-    depends_on: *depends-on-init
-    ports:
-      - ${HTTP_BIND:-127.0.0.1:8000}:8000
+    deploy:
+      # The new task runs the migrations and passes its healthcheck before the old one stops.
+      update_config:
+        order: start-first
+        failure_action: rollback
     healthcheck:
       test: [CMD, curl, -fsS, -o, /dev/null, http://127.0.0.1:8000/api/_info/health-check]
-      start_period: 30s
+      # Covers the first install and long migrations
+      start_period: 10m
       start_interval: 2s
       interval: 30s
       timeout: 5s
@@ -73,20 +59,19 @@ services:
 
   worker:
     <<: *shopware
-    depends_on: *depends-on-init
-    command: [php, bin/console, messenger:consume, webhook, async, low_priority, --time-limit=300, --memory-limit=384M]
+    # Messenger consumer name. Stays the same when Swarm replaces the task.
+    hostname: '{{.Service.Name}}-{{.Task.Slot}}'
+    command: [php, bin/console, messenger:consume, webhook, async, low_priority, --time-limit=3600, --memory-limit=384M]
     stop_grace_period: 120s
     deploy:
       replicas: ${WORKER_REPLICAS:-2}
 
   scheduler:
     <<: *shopware
-    depends_on: *depends-on-init
     command: [php, bin/console, scheduled-task:run, --memory-limit=256M]
 
   database:
     image: mariadb:11.8
-    restart: unless-stopped
     environment:
       MARIADB_DATABASE: shopware
       MARIADB_USER: shopware
@@ -118,7 +103,6 @@ services:
   # the entries with that tag count as invalid.
   valkey-cache:
     image: valkey/valkey:9-alpine
-    restart: unless-stopped
     command: [valkey-server, --save, '', --appendonly, 'no', --maxmemory, '${CACHE_MAXMEMORY:-1gb}', --maxmemory-policy, allkeys-lru]
     healthcheck: &valkey-healthcheck
       test: [CMD, valkey-cli, ping]
@@ -131,7 +115,6 @@ services:
   # Sessions, carts, locks, message queue. Persisted and never evicted.
   valkey-store:
     image: valkey/valkey:9-alpine
-    restart: unless-stopped
     command: [valkey-server, --appendonly, 'yes', --appendfsync, everysec, --maxmemory-policy, noeviction]
     volumes:
       - valkey-store:/data

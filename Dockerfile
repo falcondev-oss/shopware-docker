@@ -42,6 +42,7 @@ LABEL org.opencontainers.image.source=https://github.com/falcondev-oss/shopware-
 
 COPY --link docker/Caddyfile /etc/caddy/Caddyfile
 COPY --link docker/entrypoint /usr/local/bin/shopware-entrypoint
+COPY --link docker/deploy.php /usr/local/share/shopware/deploy.php
 COPY --link --from=build /var/www/html /var/www/html
 
 # Extensions change at runtime, so OPcache checks files for changes every 2 seconds.
